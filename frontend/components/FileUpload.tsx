@@ -4,20 +4,28 @@ import axios from 'axios';
 
 interface FileUploadProps {
   setResults: React.Dispatch<React.SetStateAction<any[]>>;
+  setFileRecords: React.Dispatch<React.SetStateAction<any[]>>;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
+  refreshFileHistory: () => void;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ setResults, setIsLoading, setError }) => {
-  const [file, setFile] = useState<File | null>(null);
+const FileUpload: React.FC<FileUploadProps> = ({ 
+  setResults, 
+  setFileRecords,
+  setIsLoading, 
+  setError,
+  refreshFileHistory 
+}) => {
+  const [files, setFiles] = useState<File[]>([]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    const selectedFile = acceptedFiles[0];
-    if (selectedFile && selectedFile.name.endsWith('.csv')) {
-      setFile(selectedFile);
+    const validFiles = acceptedFiles.filter(file => file.name.endsWith('.csv'));
+    if (validFiles.length > 0) {
+      setFiles(prev => [...prev, ...validFiles]);
       setError(null);
-    } else {
-      setError('Please upload a valid CSV file');
+    } else if (acceptedFiles.length > 0) {
+      setError('Please upload valid CSV files only');
     }
   }, [setError]);
 
@@ -26,12 +34,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ setResults, setIsLoading, setEr
     accept: {
       'text/csv': ['.csv']
     },
-    multiple: false
+    multiple: true
   });
 
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleUpload = async () => {
-    if (!file) {
-      setError('Please select a file to upload');
+    if (files.length === 0) {
+      setError('Please select at least one file to upload');
       return;
     }
 
@@ -39,7 +51,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ setResults, setIsLoading, setEr
     setError(null);
 
     const formData = new FormData();
-    formData.append('file', file);
+    files.forEach(file => {
+      formData.append('files[]', file);
+    });
 
     try {
       const response = await axios.post('http://localhost:5005/api/evaluate', formData, {
@@ -49,10 +63,15 @@ const FileUpload: React.FC<FileUploadProps> = ({ setResults, setIsLoading, setEr
       });
 
       setResults(response.data.results);
+      setFileRecords(response.data.file_records || []);
+      setFiles([]);
+      
+      // Refresh file history after successful upload
+      refreshFileHistory();
     } catch (error) {
-      console.error('Error uploading file:', error);
+      console.error('Error uploading files:', error);
       if (axios.isAxiosError(error) && error.response) {
-        setError(`Error: ${error.response.data.error || 'Failed to process file'}`);
+        setError(`Error: ${error.response.data.error || 'Failed to process files'}`);
       } else {
         setError('Error connecting to server. Please make sure the backend is running.');
       }
@@ -66,32 +85,46 @@ const FileUpload: React.FC<FileUploadProps> = ({ setResults, setIsLoading, setEr
       <div {...getRootProps()} className="dropzone">
         <input {...getInputProps()} />
         {isDragActive ? (
-          <p>Drop the CSV file here...</p>
+          <p>Drop the CSV files here...</p>
         ) : (
           <div>
-            <p className="mb-2">Drag & drop a CSV file here, or click to select a file</p>
+            <p className="mb-2">Drag & drop CSV files here, or click to select files</p>
             <p className="text-sm text-gray-500">Only CSV files with a 'description' column are accepted</p>
+            <p className="text-sm text-gray-500 mt-1">You can upload multiple files at once</p>
           </div>
         )}
       </div>
 
-      {file && (
-        <div className="flex items-center justify-between bg-gray-100 p-3 rounded">
-          <span className="truncate max-w-xs">{file.name}</span>
-          <span className="text-sm text-gray-500">{(file.size / 1024).toFixed(2)} KB</span>
+      {files.length > 0 && (
+        <div className="space-y-2 max-h-60 overflow-y-auto">
+          <h3 className="font-medium">Selected Files ({files.length})</h3>
+          {files.map((file, index) => (
+            <div key={index} className="flex items-center justify-between bg-gray-100 p-3 rounded">
+              <span className="truncate max-w-xs">{file.name}</span>
+              <div className="flex items-center space-x-3">
+                <span className="text-sm text-gray-500">{(file.size / 1024).toFixed(2)} KB</span>
+                <button 
+                  onClick={() => removeFile(index)}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       <button
         onClick={handleUpload}
-        disabled={!file}
+        disabled={files.length === 0}
         className={`w-full py-2 px-4 rounded font-medium ${
-          !file
+          files.length === 0
             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
             : 'bg-primary text-white hover:bg-blue-700'
         }`}
       >
-        Upload and Evaluate
+        Upload and Evaluate {files.length > 0 ? `(${files.length} files)` : ''}
       </button>
     </div>
   );

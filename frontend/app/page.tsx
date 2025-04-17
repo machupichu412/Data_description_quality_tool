@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import FileUpload from '../components/FileUpload'
 import ResultsTable from '../components/ResultsTable'
+import FileHistory from '../components/FileHistory'
 
 interface Result {
   description: string;
@@ -10,23 +11,53 @@ interface Result {
   reasoning: string;
 }
 
+interface FileRecord {
+  id?: number;
+  filename: string;
+  count?: number;
+  pass_count?: number;
+  fail_count?: number;
+  pass_rate?: number;
+}
+
 export default function Home() {
   const [results, setResults] = useState<Result[]>([]);
+  const [fileRecords, setFileRecords] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshFileHistory = () => {
+    // This function will be passed to child components to trigger file history refresh
+    const fileHistoryComponent = document.getElementById('file-history-component');
+    if (fileHistoryComponent) {
+      const refreshButton = fileHistoryComponent.querySelector('button');
+      if (refreshButton) refreshButton.click();
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8">
+      <div id="file-history-component">
+        <FileHistory 
+          setResults={setResults}
+          setFileRecords={setFileRecords}
+          setIsLoading={setIsLoading}
+          setError={setError}
+        />
+      </div>
+
       <section className="bg-white p-6 rounded-lg shadow-md">
         <h2 className="text-xl font-semibold mb-4">Data Description Quality Evaluator</h2>
         <p className="mb-4">
-          Upload a CSV file containing data descriptions to evaluate their quality. 
-          The file must include a column named &quot;description&quot;.
+          Upload CSV files containing data descriptions to evaluate their quality. 
+          Files must include a column named &quot;description&quot;.
         </p>
         <FileUpload 
           setResults={setResults} 
+          setFileRecords={setFileRecords}
           setIsLoading={setIsLoading} 
           setError={setError} 
+          refreshFileHistory={refreshFileHistory}
         />
       </section>
 
@@ -45,7 +76,7 @@ export default function Home() {
       {results.length > 0 && !isLoading && (
         <section className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Evaluation Results</h2>
-          <ResultsTable results={results} />
+          <ResultsTable results={results} fileRecords={fileRecords} />
         </section>
       )}
     </div>

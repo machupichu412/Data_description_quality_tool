@@ -35,3 +35,16 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+
+backend/__pycache__/
+backend/models/
+backend/uploads/
+backend/data/
+backend/db.sh
+backend/requirements.txt
+backend/vector_store/
+backend/vector_store.py
+
+frontend/.next/
+frontend/node_modules/
