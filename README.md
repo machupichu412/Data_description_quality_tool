@@ -5,7 +5,7 @@ A tool that uses an LLM to rank the quality of data descriptions, outputting "pa
 ## Features
 
 - Next.js frontend with an upload screen for CSV files
-- Flask backend that processes descriptions using LangChain and RAG
+- Flask backend that processes descriptions using LangChain
 - References data quality review guidelines
 - Displays results in a tabular format showing description, pass/fail status, and reasoning
 
