@@ -55,7 +55,7 @@ initial_prompt = PromptTemplate(
     7. Be precise and allow only one interpretation.
     8. Be self-contained and not rely on references to other fields.
     9. Optionally include example values to improve clarity and consistency.
-    Evaluate the following description carefully. If it violates any of these principles, label it as **Fail** Otherwise, label it **Pass**
+    Evaluate the following description carefully. If it violates any of these principles, label it as 'Fail' Otherwise, label it 'Pass'.
     {description} 
     Output only 'Pass' or 'Fail' without any additional text.
     """
