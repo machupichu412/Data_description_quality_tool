@@ -42,6 +42,9 @@ export default function Home() {
     setRefreshTrigger((prev) => prev + 1);
   };
 
+  // Initialize results as empty array if undefined
+  const safeResults = results || [];
+
   return (
     <div className="flex flex-col gap-8">
       <div id="file-history-component">
@@ -87,10 +90,10 @@ export default function Home() {
         </div>
       )}
 
-      {results.length > 0 && !isLoading && (
+      {safeResults.length > 0 && !isLoading && (
         <section className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Evaluation Results</h2>
-          <ResultsTable results={results} fileRecords={fileRecords} />
+          <ResultsTable results={safeResults} fileRecords={fileRecords} />
         </section>
       )}
     </div>

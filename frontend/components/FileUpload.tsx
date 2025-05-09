@@ -9,6 +9,7 @@ interface FileUploadProps {
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
   refreshFileHistory: () => void;
+  isLoading: boolean;
 }
 
 const FileUpload: React.FC<FileUploadProps> = ({
@@ -17,8 +18,11 @@ const FileUpload: React.FC<FileUploadProps> = ({
   setIsLoading,
   setError,
   refreshFileHistory,
+  isLoading,
 }) => {
   const [files, setFiles] = useState<File[]>([]);
+  const [progress, setProgress] = useState<number>(0);
+  const [currentFile, setCurrentFile] = useState<string>("");
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -55,6 +59,8 @@ const FileUpload: React.FC<FileUploadProps> = ({
 
     setIsLoading(true);
     setError(null);
+    setProgress(0);
+    setCurrentFile("");
 
     const formData = new FormData();
     files.forEach((file) => {
@@ -63,28 +69,43 @@ const FileUpload: React.FC<FileUploadProps> = ({
 
     try {
       const response = await axios.post(
-        "http://localhost:5005/api/files/upload",
+        "http://localhost:5005/api/evaluate",
         formData,
         {
           headers: {
             "Content-Type": "multipart/form-data",
           },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            setProgress(percentCompleted);
+          },
         }
       );
 
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
+
       // Update file records with the new file information
       setFileRecords((prev) => [...prev, ...response.data.files]);
-      setResults([]); // Clear results when new files are uploaded
+      setResults(response.data.results); // Set the results directly
       setFiles([]); // Clear the uploaded files list
 
       // Show success message
-      toast.success("Files uploaded successfully");
+      toast.success("Files evaluated successfully");
     } catch (error) {
-      console.error("Error uploading files:", error);
-      setError("Failed to upload files. Please try again.");
-      toast.error("Failed to upload files");
+      console.error("Error evaluating files:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to evaluate files. Please try again."
+      );
+      toast.error("Failed to evaluate files");
     } finally {
       setIsLoading(false);
+      setProgress(0);
     }
   };
 
@@ -134,6 +155,25 @@ const FileUpload: React.FC<FileUploadProps> = ({
         </div>
       )}
 
+      {isLoading && (
+        <div className="mt-4">
+          <div className="flex items-center space-x-2">
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+            <span className="text-sm text-gray-500">{progress}%</span>
+          </div>
+          {currentFile && (
+            <p className="mt-2 text-sm text-gray-500">
+              Currently processing: {currentFile}
+            </p>
+          )}
+        </div>
+      )}
+
       <button
         onClick={handleUpload}
         disabled={files.length === 0}
@@ -143,7 +183,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
             : "bg-primary text-white hover:bg-blue-700"
         }`}
       >
-        Upload and Evaluate {files.length > 0 ? `(${files.length} files)` : ""}
+        Evaluate {files.length > 0 ? `(${files.length} files)` : ""}
       </button>
     </div>
   );

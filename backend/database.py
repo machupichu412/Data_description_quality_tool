@@ -18,9 +18,10 @@ class Description(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
     description = Column(Text, nullable=False)
     is_processed = Column(Boolean, default=False)
-    processed_id = Column(Integer, ForeignKey('descriptions.id'), nullable=True)
+    processed_id = Column(Integer, ForeignKey('processed_descriptions.id'), nullable=True)
 
     entries = relationship("FileEntry", back_populates="description")
+    processed_description = relationship("ProcessedDescription", back_populates="description")
 
     def to_dict(self):
         return {
@@ -75,14 +76,22 @@ class ProcessedDescription(Base):
     __tablename__ = 'processed_descriptions'
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
-    pass_ = Column(Boolean, nullable=True)
+    description_id = Column(Integer, ForeignKey('descriptions.id'), nullable=False)
+    decision = Column(String(4), nullable=False)  # 'PASS' or 'FAIL'
     reasoning = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    description = relationship("Description", back_populates="processed_description")
 
     def to_dict(self):
         return {
             'id': self.id,
-            'pass_': self.pass_,
-            'reasoning': self.reasoning
+            'description_id': self.description_id,
+            'decision': self.decision,
+            'reasoning': self.reasoning,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
         }
 
 def init_db():
@@ -96,22 +105,34 @@ def drop_db():
     print("Database dropped successfully")
 
 # DESCRIPTION FUNCTIONS
-def add_description(description_text, file_entry_id=None, processed_id=None, is_processed=False):
+def add_description(description_text, file_id=None, is_processed=False):
     session = Session()
     try:
+        # Check if description already exists
+        existing_desc = session.query(Description).filter_by(description=description_text).first()
+        if existing_desc:
+            return existing_desc.id
+            
         desc = Description(
             description=description_text,
-            file_entry_id=file_entry_id,
-            processed_id=processed_id,
             is_processed=is_processed
         )
         session.add(desc)
+        session.flush()  # Get ID before committing
+        
+        if file_id:
+            file_entry = FileEntry(
+                file_id=file_id,
+                desc_id=desc.id
+            )
+            session.add(file_entry)
+            
         session.commit()
-        return True
+        return desc.id
     except Exception as e:
         session.rollback()
         print(f"Error adding description: {e}")
-        return False
+        return None
     finally:
         session.close()
 
@@ -157,20 +178,14 @@ def add_descriptions_and_file_entries(descriptions, file_id):
     finally:
         session.close()
 
-def add_processed_description(pass_: bool, reasoning: str) -> int:
-    """
-    Add a new processed description entry.
-
-    Args:
-        pass_ (bool): Indicates if the description passed the quality check.
-        reasoning (str): Justification for the decision.
-
-    Returns:
-        int: The ID of the newly created ProcessedDescription, or None if there was an error.
-    """
+def add_processed_description(description_id, decision, reasoning):
     session = Session()
     try:
-        processed_desc = ProcessedDescription(pass_=pass_, reasoning=reasoning)
+        processed_desc = ProcessedDescription(
+            description_id=description_id,
+            decision=decision.upper(),
+            reasoning=reasoning
+        )
         session.add(processed_desc)
         session.commit()
         return processed_desc.id
@@ -221,13 +236,13 @@ def check_for_processed(description_text):
         session.close()
 
 
-def update_description_evaluation(description_id, processed_id):
+def update_description_processing(description_id, processed_id):
     session = Session()
     try:
         desc = session.query(Description).filter_by(id=description_id).first()
         if desc:
-            desc.processed_id = processed_id
             desc.is_processed = True
+            desc.processed_id = processed_id
             session.commit()
             return True
         return False
@@ -247,6 +262,17 @@ def get_unprocessed_descriptions(limit=100):
     except Exception as e:
         print(f"Error getting unprocessed descriptions: {e}")
         return []
+    finally:
+        session.close()
+
+def get_processed_description(description_id):
+    session = Session()
+    try:
+        processed_desc = session.query(ProcessedDescription).filter_by(description_id=description_id).first()
+        return processed_desc.to_dict() if processed_desc else None
+    except Exception as e:
+        print(f"Error getting processed description: {e}")
+        return None
     finally:
         session.close()
 

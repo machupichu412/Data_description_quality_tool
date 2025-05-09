@@ -35,6 +35,26 @@ const FileHistory: React.FC<FileHistoryProps> = ({
 }) => {
   const [loadingFileId, setLoadingFileId] = useState<number | null>(null);
 
+  useEffect(() => {
+    // Fetch initial file records if none exist
+    if (fileRecords.length === 0 && !isLoading) {
+      fetchFileRecords();
+    }
+  }, [fileRecords, isLoading]);
+
+  const fetchFileRecords = async () => {
+    try {
+      setIsLoading(true);
+      const response = await axios.get("http://localhost:5005/api/files");
+      setFileRecords(response.data.files || []);
+    } catch (error) {
+      console.error("Error fetching file records:", error);
+      setError("Failed to load file history");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString();
@@ -90,6 +110,10 @@ const FileHistory: React.FC<FileHistoryProps> = ({
     }
   };
 
+  const handleDownloadResults = async (fileId: number) => {
+    // Implement download logic here
+  };
+
   if (error) {
     return (
       <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
@@ -99,79 +123,77 @@ const FileHistory: React.FC<FileHistoryProps> = ({
   }
 
   return (
-    <div className="w-full">
+    <div className="bg-white p-6 rounded-lg shadow-md">
       <h2 className="text-xl font-semibold mb-4">File History</h2>
-      {error && (
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>
+
+      {isLoading && (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        </div>
       )}
-      <table className="w-full">
-        <thead>
-          <tr>
-            <th className="text-left py-3 px-4">Filename</th>
-            <th className="text-left py-3 px-4">Date</th>
-            <th className="text-left py-3 px-4">Total</th>
-            <th className="text-left py-3 px-4">Pass</th>
-            <th className="text-left py-3 px-4">Fail</th>
-            <th className="text-left py-3 px-4">Pass Rate</th>
-            <th className="text-left py-3 px-4">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {isLoading ? (
-            <tr>
-              <td colSpan={7} className="text-center py-4">
-                Loading...
-              </td>
-            </tr>
-          ) : fileRecords.length === 0 ? (
-            <tr>
-              <td colSpan={7} className="text-center py-4">
-                No files uploaded yet
-              </td>
-            </tr>
-          ) : (
-            fileRecords.map((file) => (
-              <tr key={file.id} className="border-b">
-                <td className="py-3 px-4">{file.filename}</td>
-                <td className="py-3 px-4">{formatDate(file.timestamp)}</td>
-                <td className="py-3 px-4">{file.count}</td>
-                <td className="py-3 px-4">{file.pass_count}</td>
-                <td className="py-3 px-4">{file.fail_count}</td>
-                <td className="py-3 px-4">{formatPassRate(file.pass_rate)}</td>
-                <td className="py-3 px-4">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => handleViewResults(file.id)}
-                      disabled={loadingFileId === file.id}
-                      className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-                    >
-                      {loadingFileId === file.id
-                        ? "Loading..."
-                        : "View Results"}
-                    </button>
-                    {onFileAction && (
-                      <>
-                        <button
-                          onClick={() => onFileAction("download", file.id)}
-                          className="px-2 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
-                        >
-                          Download
-                        </button>
-                        <button
-                          onClick={() => onFileAction("delete", file.id)}
-                          className="px-2 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+
+      {fileRecords.length === 0 && !isLoading && (
+        <p className="text-gray-500">No files have been evaluated yet</p>
+      )}
+
+      {fileRecords.length > 0 && (
+        <div className="space-y-4">
+          {fileRecords.map((record) => (
+            <div
+              key={record.id}
+              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
+            >
+              <div className="flex items-center space-x-4">
+                <div className="flex flex-col">
+                  <span className="font-medium">{record.filename}</span>
+                  <span className="text-sm text-gray-500">
+                    {formatDate(record.timestamp)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex flex-col items-end">
+                  <span className="text-sm text-gray-500">Total:</span>
+                  <span className="font-medium">{record.count}</span>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className="text-sm text-gray-500">Pass:</span>
+                  <span className="font-medium text-green-500">
+                    {record.pass_count}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className="text-sm text-gray-500">Fail:</span>
+                  <span className="font-medium text-red-500">
+                    {record.fail_count}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className="text-sm text-gray-500">Pass Rate:</span>
+                  <span className="font-medium">
+                    {formatPassRate(record.pass_rate)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => handleViewResults(record.id)}
+                  className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700"
+                  disabled={loadingFileId === record.id}
+                >
+                  View Results
+                </button>
+                <button
+                  onClick={() => handleDownloadResults(record.id)}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
