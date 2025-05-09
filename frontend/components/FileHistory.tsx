@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect } from "react";
+import axios from "axios";
 
 interface FileRecord {
   id: number;
@@ -7,135 +7,171 @@ interface FileRecord {
   count: number;
   pass_count: number;
   fail_count: number;
-  pass_rate: number;
+  pass_rate?: number;
   timestamp: string;
+  status?: string;
 }
 
 interface FileHistoryProps {
+  fileRecords: FileRecord[];
+  isLoading?: boolean;
+  error?: string | null;
+  onFileAction?: (action: "delete" | "download", fileId: number) => void;
   setResults: React.Dispatch<React.SetStateAction<any[]>>;
   setFileRecords: React.Dispatch<React.SetStateAction<any[]>>;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
-const FileHistory: React.FC<FileHistoryProps> = ({ 
-  setResults, 
-  setFileRecords, 
-  setIsLoading, 
-  setError 
+const FileHistory: React.FC<FileHistoryProps> = ({
+  fileRecords,
+  isLoading = false,
+  error = null,
+  onFileAction,
+  setResults,
+  setFileRecords,
+  setIsLoading,
+  setError,
 }) => {
-  const [history, setHistory] = useState<FileRecord[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingFileId, setLoadingFileId] = useState<number | null>(null);
-
-  const fetchFileHistory = async () => {
-    setLoadingHistory(true);
-    try {
-      const response = await axios.get('http://localhost:5005/api/files');
-      setHistory(response.data.files || []);
-    } catch (error) {
-      console.error('Error fetching file history:', error);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchFileHistory();
-  }, []);
-
-  const handleViewResults = async (fileId: number) => {
-    setLoadingFileId(fileId);
-    setIsLoading(true);
-    try {
-      const response = await axios.get(`http://localhost:5005/api/descriptions/${fileId}`);
-      setResults(response.data.results || []);
-      setFileRecords([{
-        id: fileId,
-        filename: history.find(file => file.id === fileId)?.filename || 'Unknown',
-        count: response.data.results?.length || 0,
-        pass_count: response.data.results?.filter((r: any) => r.decision === 'PASS').length || 0,
-        fail_count: response.data.results?.filter((r: any) => r.decision === 'FAIL').length || 0,
-        pass_rate: response.data.results?.length > 0 
-          ? (response.data.results.filter((r: any) => r.decision === 'PASS').length / response.data.results.length) * 100 
-          : 0
-      }]);
-    } catch (error) {
-      console.error('Error fetching file results:', error);
-      setError('Failed to load results for this file');
-    } finally {
-      setLoadingFileId(null);
-      setIsLoading(false);
-    }
-  };
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString();
   };
 
-  if (history.length === 0 && !loadingHistory) {
+  const formatPassRate = (rate: number | undefined) => {
+    if (rate === undefined) {
+      return "-";
+    }
+    return `${rate.toFixed(1)}%`;
+  };
+
+  const handleViewResults = async (fileId: number) => {
+    setLoadingFileId(fileId);
+    setIsLoading(true);
+    try {
+      const response = await axios.get(
+        `http://localhost:5005/api/files/descriptions/${fileId}`
+      );
+      const fileData = {
+        id: fileId,
+        filename: response.data.file?.fname || "Unknown",
+        count: response.data.descriptions?.length || 0,
+        pass_count:
+          response.data.descriptions?.filter((r: any) => r.decision === "PASS")
+            .length || 0,
+        fail_count:
+          response.data.descriptions?.filter((r: any) => r.decision === "FAIL")
+            .length || 0,
+        pass_rate:
+          response.data.descriptions?.length > 0
+            ? (response.data.descriptions.filter(
+                (r: any) => r.decision === "PASS"
+              ).length /
+                response.data.descriptions.length) *
+              100
+            : 0,
+      };
+
+      // Update results and keep existing file records
+      setResults(response.data.descriptions || []);
+      setFileRecords((prevRecords) =>
+        prevRecords.map((record) =>
+          record.id === fileId ? { ...record, ...fileData } : record
+        )
+      );
+    } catch (error) {
+      console.error("Error fetching file results:", error);
+      setError("Failed to load results for this file");
+    } finally {
+      setLoadingFileId(null);
+      setIsLoading(false);
+    }
+  };
+
+  if (error) {
     return (
-      <div className="bg-gray-50 p-6 rounded-lg shadow-sm mb-6">
-        <h3 className="text-lg font-semibold mb-2">Recent Files</h3>
-        <p className="text-gray-500">No files have been uploaded yet.</p>
+      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+        <p>{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-gray-50 p-6 rounded-lg shadow-sm mb-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">Recent Files</h3>
-        <button 
-          onClick={fetchFileHistory}
-          className="text-primary hover:text-blue-700 text-sm"
-          disabled={loadingHistory}
-        >
-          {loadingHistory ? 'Refreshing...' : 'Refresh'}
-        </button>
-      </div>
-      
-      {loadingHistory ? (
-        <p className="text-gray-500">Loading file history...</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full">
-            <thead>
-              <tr className="bg-gray-100">
-                <th className="py-2 px-3 text-left">File Name</th>
-                <th className="py-2 px-3 text-left">Descriptions</th>
-                <th className="py-2 px-3 text-left">Pass Rate</th>
-                <th className="py-2 px-3 text-left">Uploaded</th>
-                <th className="py-2 px-3 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((file) => (
-                <tr key={file.id} className="border-t hover:bg-gray-50">
-                  <td className="py-2 px-3 truncate max-w-xs">{file.file_name}</td>
-                  <td className="py-2 px-3">{file.description_count}</td>
-                  <td className="py-2 px-3">
-                    <span className={file.pass_rate >= 70 ? 'text-success' : 'text-danger'}>
-                      {Math.round(file.pass_rate)}%
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-sm text-gray-600">{formatDate(file.timestamp)}</td>
-                  <td className="py-2 px-3">
+    <div className="w-full">
+      <h2 className="text-xl font-semibold mb-4">File History</h2>
+      {error && (
+        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>
+      )}
+      <table className="w-full">
+        <thead>
+          <tr>
+            <th className="text-left py-3 px-4">Filename</th>
+            <th className="text-left py-3 px-4">Date</th>
+            <th className="text-left py-3 px-4">Total</th>
+            <th className="text-left py-3 px-4">Pass</th>
+            <th className="text-left py-3 px-4">Fail</th>
+            <th className="text-left py-3 px-4">Pass Rate</th>
+            <th className="text-left py-3 px-4">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading ? (
+            <tr>
+              <td colSpan={7} className="text-center py-4">
+                Loading...
+              </td>
+            </tr>
+          ) : fileRecords.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="text-center py-4">
+                No files uploaded yet
+              </td>
+            </tr>
+          ) : (
+            fileRecords.map((file) => (
+              <tr key={file.id} className="border-b">
+                <td className="py-3 px-4">{file.filename}</td>
+                <td className="py-3 px-4">{formatDate(file.timestamp)}</td>
+                <td className="py-3 px-4">{file.count}</td>
+                <td className="py-3 px-4">{file.pass_count}</td>
+                <td className="py-3 px-4">{file.fail_count}</td>
+                <td className="py-3 px-4">{formatPassRate(file.pass_rate)}</td>
+                <td className="py-3 px-4">
+                  <div className="flex space-x-2">
                     <button
                       onClick={() => handleViewResults(file.id)}
                       disabled={loadingFileId === file.id}
-                      className="text-primary hover:text-blue-700 text-sm mr-3"
+                      className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
                     >
-                      {loadingFileId === file.id ? 'Loading...' : 'View Results'}
+                      {loadingFileId === file.id
+                        ? "Loading..."
+                        : "View Results"}
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    {onFileAction && (
+                      <>
+                        <button
+                          onClick={() => onFileAction("download", file.id)}
+                          className="px-2 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+                        >
+                          Download
+                        </button>
+                        <button
+                          onClick={() => onFileAction("delete", file.id)}
+                          className="px-2 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 };

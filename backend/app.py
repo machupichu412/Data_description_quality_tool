@@ -1,9 +1,9 @@
 import os
 import pandas as pd
-import json
-import logging
+import re
+import threading
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 from werkzeug.utils import secure_filename
 import tempfile
 from datetime import datetime
@@ -11,40 +11,53 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
-
-# Import custom modules
 from database import add_descriptions, update_description_evaluation, \
     add_uploaded_file, update_file_statistics, get_recent_files, \
     get_descriptions_by_file, get_description_id, get_description_by_id, \
-    add_description, check_for_processed, get_uploaded_file
-# For testing
-# from dummy_llm import DummyLLM
+    add_description, check_for_processed, get_uploaded_file, \
+    update_file_processing_status, add_processed_description
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# Configure CORS explicitly
+CORS(app, 
+    origins=['http://localhost:3000'],
+    supports_credentials=True,
+    allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+    expose_headers=['Content-Length', 'X-CSRFToken'],
+    methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD']
+)
+
+@app.before_request
+def before_request():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,HEAD')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers.add('Access-Control-Max-Age', '86400')  # 24 hours
+    return response
+
+# Global queue to track file processing
+processing_queue = []
+
+# Lock for thread-safe operations on the queue
+queue_lock = threading.Lock()
 
 # Create upload directory if it doesn't exist
 UPLOAD_FOLDER = os.path.join('data', 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,  # or DEBUG, INFO, WARNING, ERROR, CRITICAL
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler("server.log"),     # Log to server.log
-        logging.StreamHandler()                # Log to console
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
 # Create a prompt template for evaluating data descriptions
 initial_prompt = PromptTemplate(
     input_variables=["description"],
-    template="""You are a data quality evaluator. Your task is to classify data descriptions as 'Pass' or 'Fail' based on best practices for clarity, precision, and consistency.
+    template="""<|system|>You are a data quality evaluator. Your task is to classify data descriptions as 'Pass' or 'Fail' based on best practices for clarity, precision, and consistency.
     A high-quality ('Pass') data description should:
     1. Avoid self-referencing or circular definitions.
     2. Clarify the meaning of outliers using business-specific distinctions.
@@ -55,9 +68,12 @@ initial_prompt = PromptTemplate(
     7. Be precise and allow only one interpretation.
     8. Be self-contained and not rely on references to other fields.
     9. Optionally include example values to improve clarity and consistency.
+    10. Explicitly define decode or derivation logic.
     Evaluate the following description carefully. If it violates any of these principles, label it as 'Fail' Otherwise, label it 'Pass'.
-    {description} 
-    Output only 'Pass' or 'Fail' without any additional text.
+    DESCRIPTION:
+    {description}
+    END DESCRIPTION
+    Your response should be a single word: 'Pass' or 'Fail'.<|end|><|assistant|>
     """
 )
 
@@ -75,92 +91,73 @@ followup_prompt = PromptTemplate(
     7. Be precise and allow only one interpretation.
     8. Be self-contained and not rely on references to other fields.
     9. Optionally include example values to improve clarity and consistency.
+    10. Explicitly define decode or derivation logic.
     'Pass' means the description passes all the principles listed above.
     'Fail' means the description fails to meet any of the principles listed above.
     The following description has been classified as {decision}:
     {description}
     Justify the decision with a clear explanation.
-    Output only the reasoning without any additional text.
+    If the description is classified as 'Fail', suggest a revised version that adheres to the principles.
     """
 )
 
 parser = StrOutputParser()
 
-llm = OllamaLLM(model=os.getenv('MODEL'))  # TODO change model
+phi_llm = OllamaLLM(model=os.getenv('CLASSIFY_MODEL'), temperature=0.0)
 
-@app.route('/api/evaluate', methods=['POST'])
-def evaluate_descriptions():
-    if 'files[]' not in request.files:
-        return jsonify({"error": "No files part"}), 400
-    
-    files = request.files.getlist('files[]')
-    
-    if not files or files[0].filename == '':
-        return jsonify({"error": "No selected files"}), 400
-    
-    results = []
-    file_records = []
-    
-    for file in files:
-        if not file.filename.endswith('.csv'):
-            continue  # Skip non-CSV files
+deepseek_llm = OllamaLLM(model=os.getenv('REASON_MODEL'))
+
+# Helper function to process files in background
+def process_file_in_background(file_id, file_path, filename):
+    try:
+        # Update status to processing
+        with queue_lock:
+            for item in processing_queue:
+                if item['id'] == file_id:
+                    item['status'] = 'processing'
+                    item['progress'] = 0
+                    break
         
+        session = Session()
         try:
-            # Generate a unique filename
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            unique_filename = f"{timestamp}_{filename}"
-            file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-            
-            # Save the file
-            file.save(file_path)
-            
+            # Get or create the uploaded file entry
+            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+            if not uploaded_file:
+                raise ValueError(f"File with ID {file_id} not found")
+
             # Read the CSV file
             df = pd.read_csv(file_path)
             
             # Check if the CSV has a 'description' column
             if 'description' not in df.columns:
-                file_records.append({
-                    "filename": file.filename,
-                    "error": "CSV file must contain a 'description' column"
-                })
-                continue
-            
-            # Add file record to database
-            # Check if file already exists
-            file_exists = get_uploaded_file(file.filename)
-            if file_exists:
-                file_records.append({
-                    "filename": file.filename,
-                    "error": "File already exists in database"
-                })
-                continue
-            file_id = add_uploaded_file(file.filename, os.path.getsize(file_path))
-            
-            # Add descriptions to database
-            descriptions = df['description'].tolist()
-            add_descriptions(descriptions, file_id)
-    
-            # Get LLM chain
-            initial_chain = initial_prompt | llm | parser
-            
-            followup_chain = followup_prompt | llm | parser
+                with queue_lock:
+                    for item in processing_queue:
+                        if item['id'] == file_id:
+                            item['status'] = 'error'
+                            item['error'] = "CSV file must contain a 'description' column"
+                            break
+                return
+
+            # Get LLM chains
+            initial_chain = initial_prompt | phi_llm | parser
+            followup_chain = followup_prompt | deepseek_llm | parser
             
             file_results = []
             pass_count = 0
-            fail_count = 0
-
-            # seen = set()
-
+            total_rows = len(df)
+            
             # Process each description
             for idx, row in df.iterrows():
                 description = row['description']
-
-                # Uncomment if you want to skip duplicates
-                # if description in seen:
-                #     continue
-                # seen.add(description)
-
+                
+                # Update progress
+                progress = int((idx / total_rows) * 100)
+                with queue_lock:
+                    for item in processing_queue:
+                        if item['id'] == file_id:
+                            item['progress'] = progress
+                            break
+                
                 # Skip empty descriptions
                 if pd.isna(description) or description.strip() == '':
                     result = {
@@ -168,30 +165,27 @@ def evaluate_descriptions():
                         "decision": "FAIL",
                         "reasoning": "Empty description"
                     }
-                    fail_count += 1
+                    file_results.append(result)
+                    continue
+                
+                # Check cache for existing processed description
+                processed, desc_id = check_for_processed(description)
+                if processed:
+                    desc = session.query(Description).filter_by(id=desc_id).first()
+                    processed_desc = session.query(ProcessedDescription).filter_by(id=desc.processed_id).first()
+                    result = {
+                        "description": description,
+                        "decision": "PASS" if processed_desc.pass_ else "FAIL",
+                        "reasoning": processed_desc.reasoning
+                    }
+                    if processed_desc.pass_:
+                        pass_count += 1
                 else:
-                    # Check if description has already been evaluated
-                    processed, description_id = check_for_processed(description) # will find an id if it has been evaluated
-                    desc_data = get_description_by_id(description_id)
-                    if processed:
-                        result = {
-                            "description": description,
-                            "decision": desc_data['decision'],
-                            "reasoning": desc_data['reasoning'],
-                        }
-                        if result['decision'] == "PASS":
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-                        file_results.append(result)
-                        add_description(description, file_id, result['decision'], result['reasoning'], True)
-                        continue
-
                     # Run the LLM chain
                     initial_decision = initial_chain.invoke({
                         "description": description,
                     })
-
+                    
                     # Ensure valid decision
                     attempts = 0
                     while ("pass" not in initial_decision.lower() and "fail" not in initial_decision.lower()) and attempts < 3:
@@ -199,96 +193,128 @@ def evaluate_descriptions():
                             "description": description,
                         })
                         attempts += 1
-
+                    
                     # Parse the response
-                    if ("pass" in initial_decision.lower()):
-                        decision = "PASS"
-                    elif ("fail" in initial_decision.lower()):
-                        decision = "FAIL"
-                    else:
-                        decision = "FAIL"
-
-                    # Log the LLM decision
-                    logger.info("LLM Decision: %s", initial_decision)
-
+                    decision = "PASS" if "pass" in initial_decision.lower() else "FAIL"
+                    
                     # Run followup prompt
                     reasoning = followup_chain.invoke({
                         "decision": decision,
                         "description": description,
                     })
-
-                    # Log the LLM reasoning
-                    logger.info("LLM Reasoning: %s", reasoning)
-
-                    # Add to database
-                    description_id = get_description_id(description, file_id)
-                    if not description_id:
-                        add_description(description, file_id, decision, reasoning, True)
-                    else:
-                        update_description_evaluation(description_id, decision, reasoning)
-
+                    
+                    # Remove content within <think> and </think>
+                    stripped_reasoning = re.sub(r'<think>.*?</think>', '', reasoning, flags=re.DOTALL).strip()
+                    
+                    # Add processed description
+                    processed_desc_id = add_processed_description(decision == "PASS", stripped_reasoning)
+                    if not processed_desc_id:
+                        raise Exception("Failed to add processed description")
+                    
+                    # Add description and link to processed description
+                    desc_id = add_description(description, processed_desc_id)
+                    if not desc_id:
+                        raise Exception("Failed to add description")
+                    
+                    # Add file entry
+                    file_entry = FileEntry(
+                        file_id=file_id,
+                        desc_id=desc_id
+                    )
+                    session.add(file_entry)
+                    
                     result = {
                         "description": description,
                         "decision": decision,
-                        "reasoning": reasoning
+                        "reasoning": stripped_reasoning
                     }
                     
                     if decision == "PASS":
                         pass_count += 1
-                    else:
-                        fail_count += 1
                 
                 file_results.append(result)
-            
+                
             # Update file statistics
-            if file_id:
-                update_file_statistics(file_id, len(file_results), pass_count, fail_count)
+            update_file_statistics(file_id, len(file_results), pass_count)
             
-            # Add to overall results
-            results.extend(file_results)
+            # Update processing status to completed
+            update_file_processing_status(file_id, "completed")
             
-            file_records.append({
-                "filename": file.filename,
-                "id": file_id,
-                "count": len(file_results),
-                "pass_count": pass_count,
-                "fail_count": fail_count,
-                "pass_rate": (pass_count / len(file_results)) * 100 if len(file_results) > 0 else 0
-            })
+            with queue_lock:
+                for item in processing_queue:
+                    if item['id'] == file_id:
+                        item['status'] = 'completed'
+                        item['progress'] = 100
+                        break
+            
+            session.commit()
             
         except Exception as e:
-            logger.error("Error processing file %s: %s", file.filename, str(e))
-            file_records.append({
-                "filename": file.filename,
-                "error": str(e)
-            })
-            remove_file(file_id)
-    
-    if not results:
-        return jsonify({"error": "No valid files were processed", "file_records": file_records}), 400
-    
-    return jsonify({
-        "results": results,
-        "file_records": file_records
-    }), 200
+            error_msg = f"Error processing file: {str(e)}"
+            
+            # Update error status
+            update_file_processing_status(file_id, "error", error_msg)
+            
+            with queue_lock:
+                for item in processing_queue:
+                    if item['id'] == file_id:
+                        item['status'] = 'error'
+                        item['error'] = error_msg
+                        break
+            
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    except Exception as e:
+        with queue_lock:
+            for item in processing_queue:
+                if item['id'] == file_id:
+                    item['status'] = 'error'
+                    item['error'] = f"Processing failed: {str(e)}"
+                    break
 
 @app.route('/api/health', methods=['GET'])
+@cross_origin()
 def health_check():
     return jsonify({"status": "healthy"}), 200
 
 @app.route('/api/files', methods=['GET'])
+@cross_origin()
 def get_files():
     """Get a list of recently uploaded files."""
     files = get_recent_files(limit=20)
     return jsonify({"files": files}), 200
 
-@app.route('/api/files/<int:file_id>/descriptions', methods=['GET'])
+@app.route('/api/files/descriptions/<int:file_id>', methods=['GET'])
+@cross_origin()
 def get_file_descriptions(file_id):
     """Get all descriptions from a specific file."""
     descriptions = get_descriptions_by_file(file_id)
-    return jsonify({"descriptions": descriptions}), 200
+    return jsonify(descriptions), 200
+
+@app.route('/api/queue', methods=['GET'])
+@cross_origin()
+def get_processing_queue():
+    """Get the current processing queue status."""
+    with queue_lock:
+        # Return a copy of the queue to avoid race conditions
+        queue_copy = [item.copy() for item in processing_queue]
+        
+        # Clean up completed items older than 1 hour
+        current_time = datetime.now()
+        for item in processing_queue.copy():
+            if item['status'] in ['completed', 'error']:
+                upload_time = datetime.fromisoformat(item['upload_date'])
+                time_diff = (current_time - upload_time).total_seconds() / 3600
+                if time_diff > 1:  # Remove if older than 1 hour
+                    processing_queue.remove(item)
+    
+    return jsonify({"queue": queue_copy}), 200
 
 @app.route('/api/download/<int:file_id>', methods=['GET'])
+@cross_origin()
 def download_results(file_id):
     """Generate and download results for a specific file."""
     descriptions = get_descriptions_by_file(file_id)
@@ -309,6 +335,103 @@ def download_results(file_id):
         as_attachment=True,
         download_name=f'evaluation_results_{file_id}.csv'
     )
+
+@app.route('/api/files/<int:file_id>/delete', methods=['DELETE'])
+@cross_origin()
+def delete_file(file_id):
+    try:
+        success = remove_file(file_id)
+        if success:
+            return jsonify({'message': 'File deleted successfully'}), 200
+        else:
+            return jsonify({'error': 'Failed to delete file'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/files/<int:file_id>/download', methods=['GET'])
+@cross_origin()
+def download_file_results(file_id):
+    try:
+        # Get the file from database
+        session = Session()
+        uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+        if not uploaded_file:
+            return jsonify({'error': 'File not found'}), 404
+            
+        # Get all descriptions and their results
+        descriptions = session.query(FileEntry, Description, ProcessedDescription) \
+            .join(Description, FileEntry.desc_id == Description.id) \
+            .join(ProcessedDescription, Description.processed_id == ProcessedDescription.id) \
+            .filter(FileEntry.file_id == file_id) \
+            .all()
+            
+        # Create a DataFrame with results
+        results = []
+        for entry, desc, processed in descriptions:
+            results.append({
+                'description': desc.description,
+                'decision': 'Pass' if processed.pass_ else 'Fail',
+                'reasoning': processed.reasoning
+            })
+            
+        df = pd.DataFrame(results)
+        
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
+            df.to_csv(temp_file.name, index=False)
+            return send_file(temp_file.name, as_attachment=True, 
+                           download_name=f"{uploaded_file.fname}_results.csv")
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/files/upload', methods=['POST'])
+@cross_origin()
+def upload_files():
+    """Upload one or more CSV files."""
+    if 'files[]' not in request.files:
+        return jsonify({'error': 'No files provided'}), 400
+
+    files = request.files.getlist('files[]')
+    uploaded_files = []
+
+    for file in files:
+        if file.filename == '':
+            continue
+
+        if not file.filename.endswith('.csv'):
+            continue
+
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+        try:
+            # Save the file
+            file.save(file_path)
+            
+            # Add the file to the database
+            file_size = os.path.getsize(file_path)
+            uploaded_file = add_uploaded_file(filename, file_size)
+            
+            # Process the file in background
+            threading.Thread(
+                target=process_file_in_background,
+                args=(uploaded_file, file_path, filename)
+            ).start()
+
+            uploaded_files.append({
+                'id': uploaded_file,
+                'filename': filename,
+                'file_size': file_size,
+                'upload_date': datetime.now().isoformat()
+            })
+
+        except Exception as e:
+            print(f"Error processing file: {str(e)}")
+            return jsonify({'error': f'Error processing file: {str(e)}'}), 500
+
+    response = jsonify({'files': uploaded_files})
+    return response, 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5005)
