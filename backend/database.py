@@ -116,20 +116,43 @@ def add_description(description_text, file_entry_id=None, processed_id=None, is_
         session.close()
 
 
-def add_descriptions(descriptions, file_entry_id=None):
+def add_descriptions_and_file_entries(descriptions, file_id):
+    """Allow adding descriptions and file entries in batch.
+    Args:
+        descriptions (list of str): List of description texts to add.
+        file_id (int): ID of the file entry to associate with the descriptions.
+
+    Cache check: see if any of the descriptions are already in the database.
+    If so, use the existing description ID for the given file entry.
+    """
     session = Session()
     try:
+        # First create all descriptions
+        description_records = []
         for desc_text in descriptions:
-            desc = Description(
-                description=desc_text,
-                file_entry_id=file_entry_id
+            # Check if description already exists
+            existing_desc = session.query(Description).filter_by(description=desc_text).first()
+            if existing_desc:
+                description_records.append(existing_desc)
+            else:
+                new_desc = Description(description=desc_text)
+                session.add(new_desc)
+                session.flush()  # Get the ID before committing
+                description_records.append(new_desc)
+        
+        # Now create file entries with the description IDs
+        for desc in description_records:
+            file_entry = FileEntry(
+                file_id=file_id,
+                desc_id=desc.id
             )
-            session.add(desc)
+            session.add(file_entry)
+        
         session.commit()
         return True
     except Exception as e:
         session.rollback()
-        print(f"Error adding descriptions: {e}")
+        print(f"Error adding description and file entries: {e}")
         return False
     finally:
         session.close()
@@ -344,22 +367,35 @@ def get_recent_files(limit: int = 20):
         file_stats = []
         for file in files:
             total_descs = session.query(FileEntry).filter_by(file_id=file.id).count()
-            pass_count = session.query(FileEntry).join(Description).filter(
+            processed_descs = session.query(FileEntry).join(Description).filter(
                 FileEntry.file_id == file.id,
                 Description.is_processed == True
             ).count()
             
-            fail_count = total_descs - pass_count
-            pass_rate = (pass_count / total_descs * 100) if total_descs > 0 else 0
+            pass_count = session.query(FileEntry).join(Description).filter(
+                FileEntry.file_id == file.id,
+                Description.is_processed == True,
+                Description.processed_id.isnot(None)
+            ).count()
+            
+            fail_count = processed_descs - pass_count
+            pass_rate = (pass_count / processed_descs * 100) if processed_descs > 0 else 0
+            
+            # Calculate progress percentage
+            progress = (processed_descs / total_descs * 100) if total_descs > 0 else 0
             
             file_stats.append({
                 'id': file.id,
                 'filename': file.fname,
                 'count': total_descs,
+                'processed': processed_descs,
                 'pass_count': pass_count,
                 'fail_count': fail_count,
                 'pass_rate': pass_rate,
-                'timestamp': file.upload_date.isoformat()
+                'status': file.processing_status,
+                'progress': progress,
+                'timestamp': file.upload_date.isoformat(),
+                'error': file.error_message
             })
         
         return file_stats
@@ -411,5 +447,81 @@ def get_descriptions_by_file(file_id):
     finally:
         session.close()
 
+
+def load_existing_files_to_queue():
+    """Load all non-processed files from the database into the processing queue.
+    
+    Returns:
+        list: List of queue items that were added
+    """
+    session = Session()
+    try:
+        # Get all files that haven't been fully processed
+        files = session.query(UploadedFile).filter(
+            UploadedFile.num_processed < UploadedFile.total_descs
+        ).all()
+
+        queue_items = []
+        for file in files:
+            queue_items.append({
+                'id': file.id,
+                'file_name': file.fname,
+                'status': file.processing_status,
+                'progress': None,
+                'upload_date': file.upload_date.isoformat(),
+                'error': file.error_message
+            })
+        
+        return queue_items
+    except Exception as e:
+        print(f"Error loading existing files to queue: {e}")
+        return []
+    finally:
+        session.close()
+
+def get_or_create_uploaded_file(file_id):
+    """Get or create an uploaded file entry.
+    
+    Args:
+        file_id (int): ID of the uploaded file
+        
+    Returns:
+        UploadedFile: The file entry object
+    """
+    session = Session()
+    try:
+        uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+        if not uploaded_file:
+            raise ValueError(f"File with ID {file_id} not found")
+        return uploaded_file
+    except Exception as e:
+        print(f"Error getting uploaded file: {e}")
+        raise
+    finally:
+        session.close()
+
+
+def get_file_descriptions_with_results(file_id):
+    """Get all descriptions and their results for a specific file.
+    
+    Args:
+        file_id (int): ID of the uploaded file
+        
+    Returns:
+        list: List of tuples containing (FileEntry, Description, ProcessedDescription)
+    """
+    session = Session()
+    try:
+        descriptions = session.query(FileEntry, Description, ProcessedDescription) \
+            .join(Description, FileEntry.desc_id == Description.id) \
+            .join(ProcessedDescription, Description.processed_id == ProcessedDescription.id) \
+            .filter(FileEntry.file_id == file_id) \
+            .all()
+        return descriptions
+    except Exception as e:
+        print(f"Error getting file descriptions: {e}")
+        raise
+    finally:
+        session.close()
 
 init_db()

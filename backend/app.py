@@ -11,11 +11,14 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
-from database import add_descriptions, update_description_evaluation, \
-    add_uploaded_file, update_file_statistics, get_recent_files, \
-    get_descriptions_by_file, get_description_id, get_description_by_id, \
-    add_description, check_for_processed, get_uploaded_file, \
-    update_file_processing_status, add_processed_description
+from database import (
+    add_description, add_descriptions_and_file_entries, add_file_entries_batch,
+    add_processed_description, add_uploaded_file, check_for_processed,
+    get_description_id, get_description_by_id, get_uploaded_file,
+    get_recent_files, get_descriptions_by_file, update_file_statistics,
+    update_file_processing_status, get_or_create_uploaded_file,
+    get_file_descriptions_with_results
+)
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +27,7 @@ app = Flask(__name__)
 
 # Configure CORS explicitly
 CORS(app, 
-    origins=['http://localhost:3000'],
+    resources={r"/*": {"origins": "http://localhost:3000"}},
     supports_credentials=True,
     allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
     expose_headers=['Content-Length', 'X-CSRFToken'],
@@ -34,7 +37,11 @@ CORS(app,
 @app.before_request
 def before_request():
     if request.method == 'OPTIONS':
-        return jsonify({}), 200
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+        return response
 
 @app.after_request
 def after_request(response):
@@ -118,161 +125,138 @@ def process_file_in_background(file_id, file_path, filename):
                     item['progress'] = 0
                     break
         
-        session = Session()
-        try:
-            # Get or create the uploaded file entry
-            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
-            if not uploaded_file:
-                raise ValueError(f"File with ID {file_id} not found")
-
-            # Read the CSV file
-            df = pd.read_csv(file_path)
-            
-            # Check if the CSV has a 'description' column
-            if 'description' not in df.columns:
-                with queue_lock:
-                    for item in processing_queue:
-                        if item['id'] == file_id:
-                            item['status'] = 'error'
-                            item['error'] = "CSV file must contain a 'description' column"
-                            break
-                return
-
-            # Get LLM chains
-            initial_chain = initial_prompt | phi_llm | parser
-            followup_chain = followup_prompt | deepseek_llm | parser
-            
-            file_results = []
-            pass_count = 0
-            total_rows = len(df)
-            
-            # Process each description
-            for idx, row in df.iterrows():
-                description = row['description']
-                
-                # Update progress
-                progress = int((idx / total_rows) * 100)
-                with queue_lock:
-                    for item in processing_queue:
-                        if item['id'] == file_id:
-                            item['progress'] = progress
-                            break
-                
-                # Skip empty descriptions
-                if pd.isna(description) or description.strip() == '':
-                    result = {
-                        "description": "",
-                        "decision": "FAIL",
-                        "reasoning": "Empty description"
-                    }
-                    file_results.append(result)
-                    continue
-                
-                # Check cache for existing processed description
-                processed, desc_id = check_for_processed(description)
-                if processed:
-                    desc = session.query(Description).filter_by(id=desc_id).first()
-                    processed_desc = session.query(ProcessedDescription).filter_by(id=desc.processed_id).first()
-                    result = {
-                        "description": description,
-                        "decision": "PASS" if processed_desc.pass_ else "FAIL",
-                        "reasoning": processed_desc.reasoning
-                    }
-                    if processed_desc.pass_:
-                        pass_count += 1
-                else:
-                    # Run the LLM chain
-                    initial_decision = initial_chain.invoke({
-                        "description": description,
-                    })
-                    
-                    # Ensure valid decision
-                    attempts = 0
-                    while ("pass" not in initial_decision.lower() and "fail" not in initial_decision.lower()) and attempts < 3:
-                        initial_decision = initial_chain.invoke({
-                            "description": description,
-                        })
-                        attempts += 1
-                    
-                    # Parse the response
-                    decision = "PASS" if "pass" in initial_decision.lower() else "FAIL"
-                    
-                    # Run followup prompt
-                    reasoning = followup_chain.invoke({
-                        "decision": decision,
-                        "description": description,
-                    })
-                    
-                    # Remove content within <think> and </think>
-                    stripped_reasoning = re.sub(r'<think>.*?</think>', '', reasoning, flags=re.DOTALL).strip()
-                    
-                    # Add processed description
-                    processed_desc_id = add_processed_description(decision == "PASS", stripped_reasoning)
-                    if not processed_desc_id:
-                        raise Exception("Failed to add processed description")
-                    
-                    # Add description and link to processed description
-                    desc_id = add_description(description, processed_desc_id)
-                    if not desc_id:
-                        raise Exception("Failed to add description")
-                    
-                    # Add file entry
-                    file_entry = FileEntry(
-                        file_id=file_id,
-                        desc_id=desc_id
-                    )
-                    session.add(file_entry)
-                    
-                    result = {
-                        "description": description,
-                        "decision": decision,
-                        "reasoning": stripped_reasoning
-                    }
-                    
-                    if decision == "PASS":
-                        pass_count += 1
-                
-                file_results.append(result)
-                
-            # Update file statistics
-            update_file_statistics(file_id, len(file_results), pass_count)
-            
-            # Update processing status to completed
-            update_file_processing_status(file_id, "completed")
-            
-            with queue_lock:
-                for item in processing_queue:
-                    if item['id'] == file_id:
-                        item['status'] = 'completed'
-                        item['progress'] = 100
-                        break
-            
-            session.commit()
-            
-        except Exception as e:
-            error_msg = f"Error processing file: {str(e)}"
-            
-            # Update error status
-            update_file_processing_status(file_id, "error", error_msg)
-            
+        # Get the uploaded file entry
+        uploaded_file = get_or_create_uploaded_file(file_id)
+        
+        # Read the CSV file
+        df = pd.read_csv(file_path)
+        
+        # Check if the CSV has a 'description' column
+        if 'description' not in df.columns:
             with queue_lock:
                 for item in processing_queue:
                     if item['id'] == file_id:
                         item['status'] = 'error'
-                        item['error'] = error_msg
+                        item['error'] = "CSV file must contain a 'description' column"
+                        break
+            return
+
+        # Get LLM chains
+        initial_chain = initial_prompt | phi_llm | parser
+        followup_chain = followup_prompt | deepseek_llm | parser
+        
+        file_results = []
+        pass_count = 0
+        total_rows = len(df)
+        
+        # Process each description
+        for idx, row in df.iterrows():
+            description = row['description']
+            
+            # Update progress
+            progress = int((idx / total_rows) * 100)
+            with queue_lock:
+                for item in processing_queue:
+                    if item['id'] == file_id:
+                        item['progress'] = progress
                         break
             
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
+            # Skip empty descriptions
+            if pd.isna(description) or description.strip() == '':
+                result = {
+                    "description": "",
+                    "decision": "FAIL",
+                    "reasoning": "Empty description"
+                }
+                file_results.append(result)
+                continue
+            
+            # Check cache for existing processed description
+            processed, desc_id = check_for_processed(description)
+            if processed:
+                desc = get_description_by_id(desc_id)
+                processed_desc = get_description_by_id(desc.processed_id)
+                result = {
+                    "description": description,
+                    "decision": "PASS" if processed_desc.pass_ else "FAIL",
+                    "reasoning": processed_desc.reasoning
+                }
+                if processed_desc.pass_:
+                    pass_count += 1
+            else:
+                # Run the LLM chain
+                initial_decision = initial_chain.invoke({
+                    "description": description,
+                })
+                
+                # Ensure valid decision
+                attempts = 0
+                while ("pass" not in initial_decision.lower() and "fail" not in initial_decision.lower()) and attempts < 3:
+                    initial_decision = initial_chain.invoke({
+                        "description": description,
+                    })
+                    attempts += 1
+                
+                # Parse the response
+                decision = "PASS" if "pass" in initial_decision.lower() else "FAIL"
+                
+                # Run followup prompt
+                reasoning = followup_chain.invoke({
+                    "decision": decision,
+                    "description": description,
+                })
+                
+                # Remove content within <think> and </think>
+                stripped_reasoning = re.sub(r'<think>.*?</think>', '', reasoning, flags=re.DOTALL).strip()
+                
+                # Add processed description
+                processed_desc_id = add_processed_description(decision == "PASS", stripped_reasoning)
+                if not processed_desc_id:
+                    raise Exception("Failed to add processed description")
+                
+                # Add description and link to processed description
+                desc_id = add_description(description, processed_desc_id)
+                if not desc_id:
+                    raise Exception("Failed to add description")
+                
+                # Add file entry
+                add_file_entries_batch([desc_id], file_id)
+                
+                result = {
+                    "description": description,
+                    "decision": decision,
+                    "reasoning": stripped_reasoning
+                }
+                
+                if decision == "PASS":
+                    pass_count += 1
+            
+            file_results.append(result)
+            
+        # Update file statistics
+        update_file_statistics(file_id, len(file_results), pass_count)
+        
+        # Update processing status to completed
+        update_file_processing_status(file_id, "completed")
+        
+        with queue_lock:
+            for item in processing_queue:
+                if item['id'] == file_id:
+                    item['status'] = 'completed'
+                    item['progress'] = 100
+                    break
+        
     except Exception as e:
+        error_msg = f"Error processing file: {str(e)}"
+        
+        # Update error status
+        update_file_processing_status(file_id, "error", error_msg)
+        
         with queue_lock:
             for item in processing_queue:
                 if item['id'] == file_id:
                     item['status'] = 'error'
-                    item['error'] = f"Processing failed: {str(e)}"
+                    item['error'] = error_msg
                     break
 
 @app.route('/api/health', methods=['GET'])
@@ -299,6 +283,14 @@ def get_file_descriptions(file_id):
 def get_processing_queue():
     """Get the current processing queue status."""
     with queue_lock:
+        # Get queue items from database
+        new_queue_items = load_existing_files_to_queue()
+        
+        # Add new items to the queue if they're not already present
+        for item in new_queue_items:
+            if not any(q['id'] == item['id'] for q in processing_queue):
+                processing_queue.append(item)
+        
         # Return a copy of the queue to avoid race conditions
         queue_copy = [item.copy() for item in processing_queue]
         
@@ -310,8 +302,8 @@ def get_processing_queue():
                 time_diff = (current_time - upload_time).total_seconds() / 3600
                 if time_diff > 1:  # Remove if older than 1 hour
                     processing_queue.remove(item)
-    
-    return jsonify({"queue": queue_copy}), 200
+        
+        return jsonify({'queue': queue_copy}), 200
 
 @app.route('/api/download/<int:file_id>', methods=['GET'])
 @cross_origin()
@@ -353,34 +345,18 @@ def delete_file(file_id):
 def download_file_results(file_id):
     try:
         # Get the file from database
-        session = Session()
-        uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
-        if not uploaded_file:
+        descriptions = get_file_descriptions_with_results(file_id)
+        if not descriptions:
             return jsonify({'error': 'File not found'}), 404
-            
-        # Get all descriptions and their results
-        descriptions = session.query(FileEntry, Description, ProcessedDescription) \
-            .join(Description, FileEntry.desc_id == Description.id) \
-            .join(ProcessedDescription, Description.processed_id == ProcessedDescription.id) \
-            .filter(FileEntry.file_id == file_id) \
-            .all()
-            
-        # Create a DataFrame with results
-        results = []
-        for entry, desc, processed in descriptions:
-            results.append({
-                'description': desc.description,
-                'decision': 'Pass' if processed.pass_ else 'Fail',
-                'reasoning': processed.reasoning
-            })
-            
-        df = pd.DataFrame(results)
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(descriptions)
         
         # Create a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
             df.to_csv(temp_file.name, index=False)
             return send_file(temp_file.name, as_attachment=True, 
-                           download_name=f"{uploaded_file.fname}_results.csv")
+                           download_name=f"evaluation_results_{file_id}.csv")
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -409,11 +385,37 @@ def upload_files():
             # Save the file
             file.save(file_path)
             
-            # Add the file to the database
-            file_size = os.path.getsize(file_path)
-            uploaded_file = add_uploaded_file(filename, file_size)
+            # Read the CSV file
+            df = pd.read_csv(file_path)
             
-            # Process the file in background
+            # Check if the CSV has a 'description' column
+            if 'description' not in df.columns:
+                return jsonify({'error': 'CSV file must contain a \'description\' column'}), 400
+                
+            # Check if file already exists in database
+            # file_exists = get_uploaded_file(file.filename)
+            # if file_exists:
+            #     return jsonify({'error': 'File already exists in database'}), 400
+                
+            # Add file record to database
+            uploaded_file = add_uploaded_file(file.filename, os.path.getsize(file_path))
+            
+            # Add file to processing queue
+            with queue_lock:
+                processing_queue.append({
+                    'id': uploaded_file,
+                    'file_name': file.filename,
+                    'status': 'waiting',
+                    'progress': None,
+                    'upload_date': datetime.now().isoformat(),
+                    'error': None
+                })
+            
+            # Add descriptions to database
+            descriptions = df['description'].tolist()
+            add_descriptions_and_file_entries(descriptions, uploaded_file)
+            
+            # Start background processing
             threading.Thread(
                 target=process_file_in_background,
                 args=(uploaded_file, file_path, filename)
@@ -422,7 +424,7 @@ def upload_files():
             uploaded_files.append({
                 'id': uploaded_file,
                 'filename': filename,
-                'file_size': file_size,
+                'file_size': os.path.getsize(file_path),
                 'upload_date': datetime.now().isoformat()
             })
 

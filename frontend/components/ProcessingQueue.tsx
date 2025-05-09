@@ -19,6 +19,7 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
 }) => {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(
     null
   );
@@ -27,16 +28,6 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
   const hasActiveItems = (items: QueueItem[]) => {
     return items.some(
       (item) => item.status === "waiting" || item.status === "processing"
-    );
-  };
-
-  // Check if we should show the queue component
-  const shouldShowQueue = (items: QueueItem[]) => {
-    return (
-      hasActiveItems(items) ||
-      items.some(
-        (item) => item.status === "completed" || item.status === "error"
-      )
     );
   };
 
@@ -57,6 +48,7 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
       }));
 
       setQueueItems(queueData);
+      setInitialLoad(false);
 
       // Only continue polling if there are active items
       if (pollingInterval && !hasActiveItems(queueData)) {
@@ -88,21 +80,22 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
 
   // Fetch queue status on component mount and when refreshTrigger changes
   useEffect(() => {
-    // Initial fetch
-    debouncedFetchQueueStatus();
+    // Add a small delay before making the first request
+    const timer = setTimeout(() => {
+      debouncedFetchQueueStatus();
+    }, 1000);
 
     // Start polling if there are active items
     if (hasActiveItems(queueItems)) {
-      // Increased polling interval to 10 seconds
       const intervalId = setInterval(debouncedFetchQueueStatus, 10000);
       setPollingInterval(intervalId);
     }
 
-    // Cleanup interval on unmount
     return () => {
       if (pollingInterval) {
         clearInterval(pollingInterval);
       }
+      clearTimeout(timer);
     };
   }, [refreshTrigger, queueItems]);
 
@@ -110,11 +103,6 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
     const date = new Date(dateString);
     return date.toLocaleString();
   };
-
-  // Only render the queue component when there are items to show
-  if (!shouldShowQueue(queueItems)) {
-    return null;
-  }
 
   return (
     <div className="bg-gray-50 p-6 rounded-lg shadow-sm mb-6">
@@ -125,11 +113,11 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
           className="text-primary hover:text-blue-700 text-sm"
           disabled={loading}
         >
-          {loading ? "Refreshing..." : "Refresh"}
+          {initialLoad && loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
-      {loading && queueItems.length === 0 ? (
+      {initialLoad && loading ? (
         <p className="text-gray-500">Loading queue information...</p>
       ) : (
         <div className="overflow-x-auto">
