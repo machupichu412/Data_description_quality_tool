@@ -3,6 +3,10 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+<<<<<<< HEAD
+=======
+from typing import Optional
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 # Create the database directory if it doesn't exist
 os.makedirs('data/db', exist_ok=True)
@@ -18,10 +22,16 @@ class Description(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
     description = Column(Text, nullable=False)
     is_processed = Column(Boolean, default=False)
+<<<<<<< HEAD
     processed_id = Column(Integer, ForeignKey('processed_descriptions.id'), nullable=True)
 
     entries = relationship("FileEntry", back_populates="description")
     processed_description = relationship("ProcessedDescription", back_populates="description")
+=======
+    processed_id = Column(Integer, ForeignKey('descriptions.id'), nullable=True)
+
+    entries = relationship("FileEntry", back_populates="description")
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
     def to_dict(self):
         return {
@@ -76,6 +86,7 @@ class ProcessedDescription(Base):
     __tablename__ = 'processed_descriptions'
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+<<<<<<< HEAD
     description_id = Column(Integer, ForeignKey('descriptions.id'), nullable=False)
     decision = Column(String(4), nullable=False)  # 'PASS' or 'FAIL'
     reasoning = Column(Text, nullable=True)
@@ -83,15 +94,24 @@ class ProcessedDescription(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     description = relationship("Description", back_populates="processed_description")
+=======
+    pass_ = Column(Boolean, nullable=True)
+    reasoning = Column(Text, nullable=True)
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
     def to_dict(self):
         return {
             'id': self.id,
+<<<<<<< HEAD
             'description_id': self.description_id,
             'decision': self.decision,
             'reasoning': self.reasoning,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
+=======
+            'pass_': self.pass_,
+            'reasoning': self.reasoning
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         }
 
 def init_db():
@@ -105,6 +125,7 @@ def drop_db():
     print("Database dropped successfully")
 
 # DESCRIPTION FUNCTIONS
+<<<<<<< HEAD
 def add_description(description_text, file_id=None, is_processed=False):
     session = Session()
     try:
@@ -120,13 +141,32 @@ def add_description(description_text, file_id=None, is_processed=False):
         session.add(desc)
         session.flush()  # Get ID before committing
         
+=======
+def add_description(description_text, file_id=None, processed_id=None, is_processed=False):
+    session = Session()
+    try:
+        # Create the description
+        desc = Description(
+            description=description_text,
+            processed_id=processed_id,
+            is_processed=is_processed
+        )
+        session.add(desc)
+        session.flush()  # Get the ID before creating file entry
+
+        # If file_id is provided, create the file entry
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         if file_id:
             file_entry = FileEntry(
                 file_id=file_id,
                 desc_id=desc.id
             )
             session.add(file_entry)
+<<<<<<< HEAD
             
+=======
+
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         session.commit()
         return desc.id
     except Exception as e:
@@ -178,6 +218,7 @@ def add_descriptions_and_file_entries(descriptions, file_id):
     finally:
         session.close()
 
+<<<<<<< HEAD
 def add_processed_description(description_id, decision, reasoning):
     session = Session()
     try:
@@ -186,6 +227,22 @@ def add_processed_description(description_id, decision, reasoning):
             decision=decision.upper(),
             reasoning=reasoning
         )
+=======
+def add_processed_description(pass_: bool, reasoning: str) -> int:
+    """
+    Add a new processed description entry.
+
+    Args:
+        pass_ (bool): Indicates if the description passed the quality check.
+        reasoning (str): Justification for the decision.
+
+    Returns:
+        int: The ID of the newly created ProcessedDescription, or None if there was an error.
+    """
+    session = Session()
+    try:
+        processed_desc = ProcessedDescription(pass_=pass_, reasoning=reasoning)
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         session.add(processed_desc)
         session.commit()
         return processed_desc.id
@@ -236,13 +293,22 @@ def check_for_processed(description_text):
         session.close()
 
 
+<<<<<<< HEAD
 def update_description_processing(description_id, processed_id):
+=======
+def update_description_evaluation(description_id, processed_id):
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
     session = Session()
     try:
         desc = session.query(Description).filter_by(id=description_id).first()
         if desc:
+<<<<<<< HEAD
             desc.is_processed = True
             desc.processed_id = processed_id
+=======
+            desc.processed_id = processed_id
+            desc.is_processed = True
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
             session.commit()
             return True
         return False
@@ -265,6 +331,7 @@ def get_unprocessed_descriptions(limit=100):
     finally:
         session.close()
 
+<<<<<<< HEAD
 def get_processed_description(description_id):
     session = Session()
     try:
@@ -276,6 +343,8 @@ def get_processed_description(description_id):
     finally:
         session.close()
 
+=======
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 # FILE FUNCTIONS
 def add_file_entries_batch(file_entries_data, uploaded_file_id):
     """
@@ -345,9 +414,28 @@ def get_uploaded_file(fname):
         session.close()
 
 
+<<<<<<< HEAD
 def update_file_statistics(uploaded_file_id, num_processed, pass_count):
     session = Session()
     try:
+=======
+def get_uploaded_file_by_id(file_id: int) -> Optional[UploadedFile]:
+    """Get an uploaded file by its ID."""
+    session = Session()
+    try:
+        file = session.query(UploadedFile).filter_by(id=file_id).first()
+        return file
+    except Exception as e:
+        print(f"Error getting file by ID: {e}")
+        return None
+    finally:
+        session.close()
+
+
+def update_file_statistics(uploaded_file_id, num_processed, pass_count):
+    session = Session()
+    try:
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         file = session.query(UploadedFile).filter_by(id=uploaded_file_id).first()
         if file:
             file.num_processed = num_processed
@@ -433,18 +521,38 @@ def get_recent_files(limit: int = 20):
         session.close()
 
 
+<<<<<<< HEAD
 def remove_file(file_id):
+=======
+def remove_file(file_id: int) -> bool:
+    """Remove a file and its associated descriptions from the database."""
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
     session = Session()
     try:
+        # Get the file to get its filename
         file = session.query(UploadedFile).filter_by(id=file_id).first()
         if not file:
             return False
+
+        # Delete the file's descriptions
+        descriptions = session.query(Description).filter_by(file_id=file_id).all()
+        for desc in descriptions:
+            session.delete(desc)
+
+        # Delete the file itself
         session.delete(file)
         session.commit()
+
+        # Remove the physical file from disk
+        file_path = os.path.join('data/db', file.fname)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
         return True
+
     except Exception as e:
-        session.rollback()
         print(f"Error removing file: {e}")
+        session.rollback()
         return False
     finally:
         session.close()
@@ -458,6 +566,7 @@ def get_descriptions_by_file(file_id):
         if not uploaded_file:
             return {"file": None, "descriptions": []}
 
+<<<<<<< HEAD
         file_entries = session.query(FileEntry).filter_by(file_id=file_id).all()
         descriptions = []
         for entry in file_entries:
@@ -466,6 +575,27 @@ def get_descriptions_by_file(file_id):
         return {
             "file": uploaded_file.to_dict(),
             "descriptions": [desc.to_dict() for desc in descriptions]
+=======
+        # Get all descriptions with their processed results
+        descriptions = session.query(Description, ProcessedDescription) \
+            .join(ProcessedDescription, Description.processed_id == ProcessedDescription.id) \
+            .join(FileEntry, Description.id == FileEntry.desc_id) \
+            .filter(FileEntry.file_id == file_id) \
+            .all()
+
+        # Format the results
+        formatted_descriptions = []
+        for desc, processed in descriptions:
+            formatted_descriptions.append({
+                "description": desc.description,
+                "decision": "PASS" if processed.pass_ else "FAIL",
+                "reasoning": processed.reasoning
+            })
+
+        return {
+            "file": uploaded_file.to_dict(),
+            "descriptions": formatted_descriptions
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         }
     except Exception as e:
         print(f"Error getting descriptions by file: {e}")

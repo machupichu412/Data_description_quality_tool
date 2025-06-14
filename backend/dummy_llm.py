@@ -23,25 +23,9 @@ class DummyLLM(LLM):
             description = description.lower()
         except:
             description = prompt.lower()
-        
-        # Simple heuristics to determine quality
-        good_indicators = [
-            "date", "revenue", "customer", "product", "classification", 
-            "calculated", "updated", "generated", "measured", "yyyy-mm-dd",
-            "usd", "status", "category", "format", "unit", "source"
-        ]
-        
-        bad_indicators = [
-            "field", "the data", "thing", "stuff", "items", "values", "codes",
-            "added by", "john", "jane", "bob", "alice"
-        ]
-        
-        # Count indicators
-        good_count = sum(1 for indicator in good_indicators if indicator in description)
-        bad_count = sum(1 for indicator in bad_indicators if indicator in description)
-        
+    
         # Determine if the description is good based on indicators and length
-        is_good = (good_count > bad_count) and (len(description) > 30)
+        is_good = random.choice([0, 1])
         
         # Generate reasoning based on the decision
         if is_good:

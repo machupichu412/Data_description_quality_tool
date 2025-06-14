@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import json
 import logging
+import re
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -13,9 +14,21 @@ from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 
 # Import custom modules
+<<<<<<< HEAD
 from database import add_description, add_processed_description, update_description_processing, get_processed_description, add_uploaded_file, update_file_statistics, get_recent_files, get_descriptions_by_file, get_uploaded_file, get_or_create_uploaded_file, update_file_processing_status, check_for_processed, get_description_by_id, add_file_entries_batch, get_file_descriptions_with_results
 import threading
 import re
+=======
+from database import add_descriptions_and_file_entries, update_description_evaluation, \
+    add_uploaded_file, update_file_statistics, get_recent_files, \
+    get_descriptions_by_file, get_description_id, get_description_by_id, \
+    add_description, check_for_processed, get_uploaded_file, \
+    get_file_descriptions_with_results, add_processed_description, \
+    add_file_entries_batch, load_existing_files_to_queue, update_file_processing_status, remove_file,\
+    get_uploaded_file_by_id
+# For testing
+# from dummy_llm import DummyLLM
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 # Load environment variables
 load_dotenv()
@@ -86,38 +99,30 @@ parser = StrOutputParser()
 phi_llm = OllamaLLM(model=os.getenv('CLASSIFY_MODEL'), temperature=0.0)
 
 deepseek_llm = OllamaLLM(model=os.getenv('REASON_MODEL'))
+<<<<<<< HEAD
 
 # Global processing queue and lock
 processing_queue = []
 queue_lock = threading.Lock()
+=======
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 @app.route('/api/evaluate', methods=['POST'])
 def evaluate_descriptions():
     if 'files[]' not in request.files:
-        return jsonify({"error": "No files part"}), 400
-    
+        return jsonify({"error": "No files provided"}), 400
+
     files = request.files.getlist('files[]')
-    
-    if not files or files[0].filename == '':
-        return jsonify({"error": "No selected files"}), 400
-    
     results = []
     file_records = []
-    
+
     for file in files:
-        if not file.filename.endswith('.csv'):
-            continue  # Skip non-CSV files
-        
         try:
-            # Generate a unique filename
-            filename = secure_filename(file.filename)
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            unique_filename = f"{timestamp}_{filename}"
-            file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-            
             # Save the file
+            file_path = os.path.join(UPLOAD_FOLDER, file.filename)
             file.save(file_path)
             
+<<<<<<< HEAD
             # Add file record to database
             file_exists = get_uploaded_file(file.filename)
             if file_exists:
@@ -148,9 +153,40 @@ def evaluate_descriptions():
             # Get LLM chains
             initial_chain = initial_prompt | phi_llm | parser
             followup_chain = followup_prompt | deepseek_llm | parser
+=======
+            # Read the CSV file
+            df = pd.read_csv(file_path)
             
+            # Check if the CSV has a 'description' column
+            if 'description' not in df.columns:
+                file_records.append({
+                    "filename": file.filename,
+                    "error": "CSV file must contain a 'description' column"
+                })
+                continue
+
+            # Add file record to database
+            file_exists = get_uploaded_file(file.filename)
+            # if file_exists:
+            #     file_records.append({
+            #         "filename": file.filename,
+            #         "error": "File already exists in database"
+            #     })
+            #     continue
+
+            file_id = add_uploaded_file(file.filename, os.path.getsize(file_path))
+            
+            # Add descriptions to database
+            descriptions = df['description'].tolist()
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
+            
+            # Get LLM chains
+            initial_chain = initial_prompt | phi_llm | parser
+            followup_chain = followup_prompt | deepseek_llm | parser
+
             file_results = []
             pass_count = 0
+<<<<<<< HEAD
             total_rows = len(df)
             
             # Process each description
@@ -165,13 +201,21 @@ def evaluate_descriptions():
                             item['progress'] = progress
                             break
                 
+=======
+            fail_count = 0
+            total_count = len(descriptions)
+
+            # Process each description
+            for idx, description in enumerate(descriptions):
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                 # Skip empty descriptions
                 if pd.isna(description) or description.strip() == '':
                     result = {
-                        "description": "",
+                        "description": description,
                         "decision": "FAIL",
                         "reasoning": "Empty description"
                     }
+<<<<<<< HEAD
                     file_results.append(result)
                     continue
                 
@@ -230,14 +274,82 @@ def evaluate_descriptions():
                         "description": description,
                         "decision": decision,
                         "reasoning": stripped_reasoning
+=======
+                    fail_count += 1
+                    file_results.append(result)
+                    continue
+
+                # Check cache for existing processed description
+                processed, description_id = check_for_processed(description)
+                if processed:
+                    desc_data = get_description_by_id(description_id)
+                    processed_data = get_description_by_id(desc_data.processed_id)
+                    result = {
+                        "description": description,
+                        "decision": "PASS" if processed_data.pass_ else "FAIL",
+                        "reasoning": processed_data.reasoning
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                     }
-                    
-                    if decision == "PASS":
+                    if result['decision'] == "PASS":
                         pass_count += 1
+<<<<<<< HEAD
+=======
+                    else:
+                        fail_count += 1
+                    file_results.append(result)
+                    continue
+
+                # Run the LLM chain
+                initial_decision = initial_chain.invoke({
+                    "description": description,
+                })
+
+                # Ensure valid decision
+                attempts = 0
+                while ("pass" not in initial_decision.lower() and "fail" not in initial_decision.lower()) and attempts < 3:
+                    initial_decision = initial_chain.invoke({
+                        "description": description,
+                    })
+                    attempts += 1
+
+                # Parse the response
+                decision = "PASS" if "pass" in initial_decision.lower() else "FAIL"
+
+                # Run followup prompt
+                reasoning = followup_chain.invoke({
+                    "decision": decision,
+                    "description": description,
+                })
+
+                # Remove content within <think> and </think>
+                stripped_reasoning = re.sub(r'<think>.*?</think>', '', reasoning, flags=re.DOTALL).strip()
+
+                # Add processed description
+                processed_desc_id = add_processed_description(decision == "PASS", stripped_reasoning)
+                if not processed_desc_id:
+                    raise Exception("Failed to add processed description")
+
+                # Add description and link to processed description
+                desc_id = add_description(description, file_id=file_id, processed_id=processed_desc_id, is_processed=True)
+                if not desc_id:
+                    raise Exception("Failed to add description")
+
+                result = {
+                    "description": description,
+                    "decision": decision,
+                    "reasoning": stripped_reasoning
+                }
+                
+                if decision == "PASS":
+                    pass_count += 1
+                else:
+                    fail_count += 1
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                 
                 file_results.append(result)
-            
+
             # Update file statistics
+<<<<<<< HEAD
             update_file_statistics(file_id, len(file_results), pass_count)
             
             # Update processing status to completed
@@ -254,16 +366,45 @@ def evaluate_descriptions():
             
             results.extend(file_results)
             
+=======
+            update_file_statistics(file_id, total_count, pass_count)
+            
+            # Update processing status
+            update_file_processing_status(file_id, "completed")
+
+            file_records.append({
+                "filename": file.filename,
+                "id": file_id,
+                "count": total_count,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "pass_rate": (pass_count / total_count) * 100 if total_count > 0 else 0
+            })
+            
+            results.extend(file_results)
+            
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         except Exception as e:
             logger.error(f"Error processing file {file.filename}: {str(e)}")
             file_records.append({
                 "filename": file.filename,
                 "error": f"Error processing file: {str(e)}"
             })
+<<<<<<< HEAD
             # Update processing status to error
             update_file_processing_status(file_id, "error", str(e))
             continue
 
+=======
+            # Remove the file if it was created
+            if file_id:
+                remove_file(file_id)
+            continue
+
+    if not results:
+        return jsonify({"error": "No valid files were processed", "file_records": file_records}), 400
+
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
     return jsonify({
         "files": file_records,
         "total_results": len(results),
@@ -283,6 +424,7 @@ def get_files():
 
 @app.route('/api/files/<int:file_id>/descriptions', methods=['GET'])
 def get_file_descriptions(file_id):
+<<<<<<< HEAD
     """Get all descriptions and their results from a specific file."""
     descriptions = get_file_descriptions_with_results(file_id)
     
@@ -302,6 +444,21 @@ def get_file_descriptions(file_id):
         },
         "descriptions": descriptions_list
     }), 200
+=======
+    """Get all descriptions from a specific file."""
+    try:
+        result = get_descriptions_by_file(file_id)
+        if not result or not result.get('file'):
+            return jsonify({"error": "File not found or no descriptions available"}), 404
+            
+        return jsonify({
+            "file": result["file"],
+            "descriptions": result["descriptions"] or []
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting file descriptions: {e}")
+        return jsonify({"error": "Failed to fetch descriptions"}), 500
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 @app.route('/api/download/<int:file_id>', methods=['GET'])
 def download_results(file_id):
@@ -324,6 +481,65 @@ def download_results(file_id):
         as_attachment=True,
         download_name=f'evaluation_results_{file_id}.csv'
     )
+
+@app.route('/api/files/<int:file_id>', methods=['DELETE'])
+def delete_file(file_id):
+    """Delete a file and its associated descriptions."""
+    try:
+        success = remove_file(file_id)
+        if not success:
+            return jsonify({"error": "File not found"}), 404
+        return jsonify({"message": "File deleted successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}")
+        return jsonify({"error": "Failed to delete file"}), 500
+
+@app.route('/api/files/<int:file_id>/download', methods=['GET'])
+def download_file(file_id):
+    """Download the original uploaded file."""
+    try:
+        file = get_uploaded_file_by_id(file_id)
+        if not file:
+            return jsonify({"error": "File not found"}), 404
+
+        # Get the file path
+        file_path = os.path.join(UPLOAD_FOLDER, file.fname)
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found on disk"}), 404
+
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=file.fname
+        )
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        return jsonify({"error": "Failed to download file"}), 500
+
+@app.route('/api/files/<int:file_id>/descriptions/download', methods=['GET'])
+def download_descriptions(file_id):
+    """Download the processed descriptions for a file."""
+    try:
+        descriptions = get_descriptions_by_file(file_id)
+        if not descriptions or not descriptions.get('descriptions'):
+            return jsonify({"error": "No descriptions found"}), 404
+
+        # Create a DataFrame with the descriptions
+        df = pd.DataFrame(descriptions['descriptions'])
+        
+        # Create a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        df.to_csv(temp_file.name, index=False)
+        
+        return send_file(
+            temp_file.name,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f'processed_descriptions_{file_id}.csv'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading descriptions: {e}")
+        return jsonify({"error": "Failed to download descriptions"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5005)
