@@ -24,10 +24,13 @@ interface FileHistoryProps {
 }
 
 const FileHistory: React.FC<FileHistoryProps> = ({
+<<<<<<< HEAD
   fileRecords,
   isLoading = false,
   error = null,
   onFileAction,
+=======
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
   setResults,
   setFileRecords,
   setIsLoading,
@@ -35,6 +38,22 @@ const FileHistory: React.FC<FileHistoryProps> = ({
 }) => {
   const [loadingFileId, setLoadingFileId] = useState<number | null>(null);
 
+<<<<<<< HEAD
+=======
+  const fetchFileHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const response = await axios.get("http://localhost:5005/api/files");
+      setHistory(response.data.files || []);
+    } catch (error) {
+      console.error("Error fetching file history:", error);
+      setError("Failed to fetch file history");
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
   useEffect(() => {
     // Fetch initial file records if none exist
     if (fileRecords.length === 0 && !isLoading) {
@@ -44,12 +63,48 @@ const FileHistory: React.FC<FileHistoryProps> = ({
 
   const fetchFileRecords = async () => {
     try {
+<<<<<<< HEAD
       setIsLoading(true);
       const response = await axios.get("http://localhost:5005/api/files");
       setFileRecords(response.data.files || []);
     } catch (error) {
       console.error("Error fetching file records:", error);
       setError("Failed to load file history");
+=======
+      const response = await axios.get(
+        `http://localhost:5005/api/files/${fileId}/descriptions`
+      );
+      const { file, descriptions } = response.data;
+
+      // Set results and calculate statistics
+      if (!descriptions) {
+        throw new Error("No descriptions found for this file");
+      }
+
+      setResults(descriptions);
+
+      // Calculate statistics
+      const passCount = descriptions.filter(
+        (d: any) => d.decision === "PASS"
+      ).length;
+      const failCount = descriptions.length - passCount;
+      const passRate =
+        descriptions.length > 0 ? (passCount / descriptions.length) * 100 : 0;
+
+      setFileRecords([
+        {
+          id: fileId,
+          filename: file?.filename || "Unknown",
+          count: descriptions.length,
+          pass_count: passCount,
+          fail_count: failCount,
+          pass_rate: passRate,
+        },
+      ]);
+    } catch (error) {
+      console.error("Error fetching file results:", error);
+      setError("Failed to load results for this file");
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
     } finally {
       setIsLoading(false);
     }
@@ -123,6 +178,7 @@ const FileHistory: React.FC<FileHistoryProps> = ({
   }
 
   return (
+<<<<<<< HEAD
     <div className="bg-white p-6 rounded-lg shadow-md">
       <h2 className="text-xl font-semibold mb-4">File History</h2>
 
@@ -192,6 +248,68 @@ const FileHistory: React.FC<FileHistoryProps> = ({
               </div>
             </div>
           ))}
+=======
+    <div className="bg-gray-50 p-6 rounded-lg shadow-sm mb-6">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold">Recent Files</h3>
+        <button
+          onClick={fetchFileHistory}
+          className="text-primary hover:text-blue-700 text-sm"
+          disabled={loadingHistory}
+        >
+          {loadingHistory ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      {loadingHistory ? (
+        <p className="text-gray-500">Loading file history...</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="py-2 px-3 text-left">File Name</th>
+                <th className="py-2 px-3 text-left">Descriptions</th>
+                <th className="py-2 px-3 text-left">Pass Rate</th>
+                <th className="py-2 px-3 text-left">Uploaded</th>
+                <th className="py-2 px-3 text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((file) => (
+                <tr key={file.id} className="border-t hover:bg-gray-50">
+                  <td className="py-2 px-3 truncate max-w-xs">
+                    {file.filename}
+                  </td>
+                  <td className="py-2 px-3">{file.count}</td>
+                  <td className="py-2 px-3">
+                    <span
+                      className={
+                        file.pass_rate >= 70 ? "text-success" : "text-danger"
+                      }
+                    >
+                      {Math.round(file.pass_rate)}%
+                    </span>
+                  </td>
+                  <td className="py-2 px-3 text-sm text-gray-600">
+                    {formatDate(file.timestamp)}
+                  </td>
+                  <td className="py-2 px-3">
+                    <button
+                      onClick={() => handleViewResults(file.id)}
+                      disabled={loadingFileId === file.id}
+                      className="text-primary hover:text-blue-700 text-sm mr-3"
+                    >
+                      {loadingFileId === file.id
+                        ? "Loading..."
+                        : "View Results"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         </div>
       )}
     </div>

@@ -1,10 +1,17 @@
 "use client";
 
+<<<<<<< HEAD
 import { useState, useRef } from "react";
 import FileUpload from "../components/FileUpload";
 import ResultsTable from "../components/ResultsTable";
 import FileHistory from "../components/FileHistory";
 import ProcessingQueue from "../components/ProcessingQueue";
+=======
+import { useState } from "react";
+import FileUpload from "../components/FileUpload";
+import ResultsTable from "../components/ResultsTable";
+import FileHistory from "../components/FileHistory";
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 interface Result {
   description: string;
@@ -23,7 +30,7 @@ interface FileRecord {
 }
 
 export default function Home() {
-  const [results, setResults] = useState<Result[]>([]);
+  const [results, setResults] = useState<Result[] | null>(null);
   const [fileRecords, setFileRecords] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,9 +56,12 @@ export default function Home() {
     <div className="flex flex-col gap-8">
       <div id="file-history-component">
         <FileHistory
+<<<<<<< HEAD
           fileRecords={fileRecords}
           isLoading={isLoading}
           error={error}
+=======
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
           setResults={setResults}
           setFileRecords={setFileRecords}
           setIsLoading={setIsLoading}
@@ -90,7 +100,11 @@ export default function Home() {
         </div>
       )}
 
+<<<<<<< HEAD
       {safeResults.length > 0 && !isLoading && (
+=======
+      {results && results.length > 0 && !isLoading && (
+>>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         <section className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Evaluation Results</h2>
           <ResultsTable results={safeResults} fileRecords={fileRecords} />
