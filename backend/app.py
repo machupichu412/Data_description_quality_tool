@@ -14,11 +14,6 @@ from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 
 # Import custom modules
-<<<<<<< HEAD
-from database import add_description, add_processed_description, update_description_processing, get_processed_description, add_uploaded_file, update_file_statistics, get_recent_files, get_descriptions_by_file, get_uploaded_file, get_or_create_uploaded_file, update_file_processing_status, check_for_processed, get_description_by_id, add_file_entries_batch, get_file_descriptions_with_results
-import threading
-import re
-=======
 from database import add_descriptions_and_file_entries, update_description_evaluation, \
     add_uploaded_file, update_file_statistics, get_recent_files, \
     get_descriptions_by_file, get_description_id, get_description_by_id, \
@@ -28,7 +23,6 @@ from database import add_descriptions_and_file_entries, update_description_evalu
     get_uploaded_file_by_id
 # For testing
 # from dummy_llm import DummyLLM
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 # Load environment variables
 load_dotenv()
@@ -99,13 +93,6 @@ parser = StrOutputParser()
 phi_llm = OllamaLLM(model=os.getenv('CLASSIFY_MODEL'), temperature=0.0)
 
 deepseek_llm = OllamaLLM(model=os.getenv('REASON_MODEL'))
-<<<<<<< HEAD
-
-# Global processing queue and lock
-processing_queue = []
-queue_lock = threading.Lock()
-=======
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 @app.route('/api/evaluate', methods=['POST'])
 def evaluate_descriptions():
@@ -122,38 +109,6 @@ def evaluate_descriptions():
             file_path = os.path.join(UPLOAD_FOLDER, file.filename)
             file.save(file_path)
             
-<<<<<<< HEAD
-            # Add file record to database
-            file_exists = get_uploaded_file(file.filename)
-            if file_exists:
-                file_records.append({
-                    "filename": file.filename,
-                    "error": "File already exists in database"
-                })
-                continue
-            
-            file_id = add_uploaded_file(file.filename, os.path.getsize(file_path))
-            
-            # Get the uploaded file entry
-            uploaded_file = get_or_create_uploaded_file(file_id)
-            
-            # Read the CSV file
-            df = pd.read_csv(file_path)
-            
-            # Check if the CSV has a 'description' column
-            if 'description' not in df.columns:
-                with queue_lock:
-                    for item in processing_queue:
-                        if item['id'] == file_id:
-                            item['status'] = 'error'
-                            item['error'] = "CSV file must contain a 'description' column"
-                            break
-                return jsonify({"error": "CSV file must contain a 'description' column"}), 400
-
-            # Get LLM chains
-            initial_chain = initial_prompt | phi_llm | parser
-            followup_chain = followup_prompt | deepseek_llm | parser
-=======
             # Read the CSV file
             df = pd.read_csv(file_path)
             
@@ -178,7 +133,6 @@ def evaluate_descriptions():
             
             # Add descriptions to database
             descriptions = df['description'].tolist()
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
             
             # Get LLM chains
             initial_chain = initial_prompt | phi_llm | parser
@@ -186,28 +140,11 @@ def evaluate_descriptions():
 
             file_results = []
             pass_count = 0
-<<<<<<< HEAD
-            total_rows = len(df)
-            
-            # Process each description
-            for idx, row in df.iterrows():
-                description = row['description']
-                
-                # Update progress
-                progress = int((idx / total_rows) * 100)
-                with queue_lock:
-                    for item in processing_queue:
-                        if item['id'] == file_id:
-                            item['progress'] = progress
-                            break
-                
-=======
             fail_count = 0
             total_count = len(descriptions)
 
             # Process each description
             for idx, description in enumerate(descriptions):
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                 # Skip empty descriptions
                 if pd.isna(description) or description.strip() == '':
                     result = {
@@ -215,66 +152,6 @@ def evaluate_descriptions():
                         "decision": "FAIL",
                         "reasoning": "Empty description"
                     }
-<<<<<<< HEAD
-                    file_results.append(result)
-                    continue
-                
-                # Check cache for existing processed description
-                processed, desc_id = check_for_processed(description)
-                if processed:
-                    desc = get_description_by_id(desc_id)
-                    processed_desc = get_description_by_id(desc.processed_id)
-                    result = {
-                        "description": description,
-                        "decision": "PASS" if processed_desc.pass_ else "FAIL",
-                        "reasoning": processed_desc.reasoning
-                    }
-                    if processed_desc.pass_:
-                        pass_count += 1
-                else:
-                    # Run the LLM chain
-                    initial_decision = initial_chain.invoke({
-                        "description": description,
-                    })
-                    
-                    # Ensure valid decision
-                    attempts = 0
-                    while ("pass" not in initial_decision.lower() and "fail" not in initial_decision.lower()) and attempts < 3:
-                        initial_decision = initial_chain.invoke({
-                            "description": description,
-                        })
-                        attempts += 1
-                    
-                    # Parse the response
-                    decision = "PASS" if "pass" in initial_decision.lower() else "FAIL"
-                    
-                    # Run followup prompt
-                    reasoning = followup_chain.invoke({
-                        "decision": decision,
-                        "description": description,
-                    })
-                    
-                    # Remove content within <think> and </think>
-                    stripped_reasoning = re.sub(r'<think>.*?</think>', '', reasoning, flags=re.DOTALL).strip()
-                    
-                    # Add processed description
-                    processed_desc_id = add_processed_description(decision == "PASS", stripped_reasoning)
-                    if not processed_desc_id:
-                        raise Exception("Failed to add processed description")
-                    
-                    # Add description and link to processed description
-                    desc_id = add_description(description, processed_desc_id)
-                    if not desc_id:
-                        raise Exception("Failed to add description")
-                    
-                    # Add file entry
-                    add_file_entries_batch([desc_id], file_id)
-                    
-                    result = {
-                        "description": description,
-                        "decision": decision,
-                        "reasoning": stripped_reasoning
-=======
                     fail_count += 1
                     file_results.append(result)
                     continue
@@ -288,12 +165,9 @@ def evaluate_descriptions():
                         "description": description,
                         "decision": "PASS" if processed_data.pass_ else "FAIL",
                         "reasoning": processed_data.reasoning
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                     }
                     if result['decision'] == "PASS":
                         pass_count += 1
-<<<<<<< HEAD
-=======
                     else:
                         fail_count += 1
                     file_results.append(result)
@@ -344,29 +218,10 @@ def evaluate_descriptions():
                     pass_count += 1
                 else:
                     fail_count += 1
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
                 
                 file_results.append(result)
 
             # Update file statistics
-<<<<<<< HEAD
-            update_file_statistics(file_id, len(file_results), pass_count)
-            
-            # Update processing status to completed
-            update_file_processing_status(file_id, "completed")
-            
-            file_records.append({
-                "filename": file.filename,
-                "total_descriptions": len(file_results),
-                "pass_count": pass_count,
-                "fail_count": len(file_results) - pass_count,
-                "pass_rate": (pass_count / len(file_results)) * 100 if len(file_results) > 0 else 0,
-                "results": file_results
-            })
-            
-            results.extend(file_results)
-            
-=======
             update_file_statistics(file_id, total_count, pass_count)
             
             # Update processing status
@@ -383,19 +238,12 @@ def evaluate_descriptions():
             
             results.extend(file_results)
             
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
         except Exception as e:
             logger.error(f"Error processing file {file.filename}: {str(e)}")
             file_records.append({
                 "filename": file.filename,
                 "error": f"Error processing file: {str(e)}"
             })
-<<<<<<< HEAD
-            # Update processing status to error
-            update_file_processing_status(file_id, "error", str(e))
-            continue
-
-=======
             # Remove the file if it was created
             if file_id:
                 remove_file(file_id)
@@ -404,7 +252,6 @@ def evaluate_descriptions():
     if not results:
         return jsonify({"error": "No valid files were processed", "file_records": file_records}), 400
 
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
     return jsonify({
         "files": file_records,
         "total_results": len(results),
@@ -424,27 +271,6 @@ def get_files():
 
 @app.route('/api/files/<int:file_id>/descriptions', methods=['GET'])
 def get_file_descriptions(file_id):
-<<<<<<< HEAD
-    """Get all descriptions and their results from a specific file."""
-    descriptions = get_file_descriptions_with_results(file_id)
-    
-    # Convert to list of dictionaries with expected format
-    descriptions_list = []
-    for desc, processed_desc in descriptions:
-        descriptions_list.append({
-            "description": desc.description,
-            "decision": processed_desc.decision,
-            "reasoning": processed_desc.reasoning
-        })
-    
-    return jsonify({
-        "file": {
-            "id": file_id,
-            "fname": desc.file_entry.uploaded_file.fname
-        },
-        "descriptions": descriptions_list
-    }), 200
-=======
     """Get all descriptions from a specific file."""
     try:
         result = get_descriptions_by_file(file_id)
@@ -458,7 +284,6 @@ def get_file_descriptions(file_id):
     except Exception as e:
         logger.error(f"Error getting file descriptions: {e}")
         return jsonify({"error": "Failed to fetch descriptions"}), 500
->>>>>>> ad7d3da (UI refresh with new fonts, updated dummy_llm)
 
 @app.route('/api/download/<int:file_id>', methods=['GET'])
 def download_results(file_id):
